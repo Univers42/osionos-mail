@@ -28,12 +28,17 @@ interface MailToolbarProps {
 
 const VIEW_LABELS: Record<MailViewId, string> = {
   inbox: 'Inbox',
+  starred: 'Starred',
+  snoozed: 'Snoozed',
+  sent: 'Sent',
   labels: 'Labels',
   'all-mail': 'All Mail',
   drafts: 'Drafts',
+  important: 'Important',
+  scheduled: 'Scheduled',
+  purchases: 'Purchases',
   spam: 'Spam',
   trash: 'Trash',
-  'notion-calendar': 'Notion Calendar',
   settings: 'Settings',
   support: 'Support',
 };
