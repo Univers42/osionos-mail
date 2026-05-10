@@ -1,0 +1,27 @@
+{
+  "name": "osionos-mail",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 3002",
+    "bridge": "node bridge/server.mjs",
+    "dev:all": "sh -c 'trap \"kill 0\" EXIT; npm run bridge & npm run dev'",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 3002",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "lucide-react": "^0.546.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "vite": "^6.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "typescript": "~5.7.3"
+  }
+}
