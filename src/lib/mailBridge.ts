@@ -13,7 +13,18 @@ export interface BridgeMessagesResponse {
   provider: MailProvider;
   account: string;
   syncedAt: string;
+  requestedLimit?: number;
+  fetchedCount?: number;
+  resultSizeEstimate?: number;
+  nextPageToken?: string;
+  hasMore?: boolean;
   messages: MailMessage[];
+}
+
+export interface BridgeMessageResponse {
+  provider: MailProvider;
+  account: string;
+  message: MailMessage;
 }
 
 function bridgeBase(endpoint: string) {
@@ -40,13 +51,22 @@ export async function loadBridgeSession(endpoint: string): Promise<BridgeSession
 }
 
 export function openBridgeAuth(endpoint: string, provider: MailProvider) {
-  const authWindow = window.open(`${bridgeBase(endpoint)}/auth/${provider}/start`, '_blank', 'noopener,noreferrer');
+  const authWindow = globalThis.open(`${bridgeBase(endpoint)}/auth/${provider}/start`, '_blank', 'noopener,noreferrer');
   if (!authWindow) throw new Error('The browser blocked the provider authorization window.');
 }
 
-export async function syncBridgeMessages(endpoint: string, limit = 50): Promise<BridgeMessagesResponse> {
-  const response = await fetch(`${bridgeBase(endpoint)}/messages?limit=${limit}`);
+export async function syncBridgeMessages(endpoint: string, limit = 2000, pageToken = '', includeBodies = false): Promise<BridgeMessagesResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (pageToken) params.set('pageToken', pageToken);
+  if (pageToken || limit < 2000) params.set('paged', 'true');
+  if (includeBodies) params.set('includeBodies', 'true');
+  const response = await fetch(`${bridgeBase(endpoint)}/messages?${params}`);
   return readJson<BridgeMessagesResponse>(response);
+}
+
+export async function loadBridgeMessage(endpoint: string, messageId: string): Promise<BridgeMessageResponse> {
+  const response = await fetch(`${bridgeBase(endpoint)}/messages/${encodeURIComponent(messageId)}`);
+  return readJson<BridgeMessageResponse>(response);
 }
 
 export async function disconnectBridge(endpoint: string): Promise<BridgeSessionResponse> {
