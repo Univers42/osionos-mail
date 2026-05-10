@@ -4,10 +4,15 @@ services:
       context: .
       target: dev
     image: osionos-mail-dev:latest
+    env_file:
+      - path: ./.env.local
+        required: false
+      - path: ./.env
+        required: false
     ports:
       - "${MAIL_HOST_PORT:-3002}:3002"
     environment:
-      VITE_MAIL_BRIDGE_URL: ${VITE_MAIL_BRIDGE_URL:-http://localhost:${MAIL_BRIDGE_PORT:-4100}}
+      VITE_MAIL_BRIDGE_URL: ${VITE_MAIL_BRIDGE_URL:-http://localhost:4100}
     volumes:
       - .:/app
       - osionos_mail_node_modules:/app/node_modules
@@ -18,15 +23,21 @@ services:
       target: dev
     image: osionos-mail-bridge-dev:latest
     command: npm run bridge
+    env_file:
+      - path: ./.env.local
+        required: false
+      - path: ./.env
+        required: false
     ports:
       - "${MAIL_BRIDGE_PORT:-4100}:4100"
     environment:
       MAIL_BRIDGE_PORT: 4100
       MAIL_APP_ORIGIN: http://localhost:${MAIL_HOST_PORT:-3002}
+      MAIL_BRIDGE_PUBLIC_ORIGIN: http://localhost:${MAIL_BRIDGE_PORT:-4100}
       GMAIL_REDIRECT_URI: http://localhost:${MAIL_BRIDGE_PORT:-4100}/auth/gmail/callback
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      GMAIL_SYNC_LIMIT: ${GMAIL_SYNC_LIMIT:-50}
+      MAIL_BRIDGE_VAULT_ENABLED: ${MAIL_BRIDGE_VAULT_ENABLED:-false}
+      VAULT_ADDR: ${VAULT_ADDR:-http://host.docker.internal:8200}
+      MAIL_BRIDGE_VAULT_OAUTH_PATH: ${MAIL_BRIDGE_VAULT_OAUTH_PATH:-secret/data/mini-baas/oauth}
     volumes:
       - .:/app
       - osionos_mail_node_modules:/app/node_modules
