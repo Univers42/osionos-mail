@@ -89,7 +89,7 @@ OAuth state is stored in the ignored `.mail-bridge-state.json` file while author
 
 ## BaaS security integration
 
-The bridge keeps Google credentials and OAuth tokens server-side. For local security parity with the BaaS stack, you can load Google OAuth client credentials from the BaaS Vault secret seeded by `infrastructure/baas/mini-baas-infra/docker/services/vault/scripts/init-vault.sh`:
+The bridge keeps Google credentials and OAuth tokens server-side. For local security parity with the BaaS stack, you can load Google OAuth client credentials from the BaaS Vault secret seeded by `apps/baas/mini-baas-infra/docker/services/vault/scripts/init-vault.sh`:
 
 ```sh
 MAIL_BRIDGE_VAULT_ENABLED=true
