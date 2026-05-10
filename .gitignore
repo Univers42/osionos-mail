@@ -4,4 +4,5 @@ dist/
 .env.*
 !.env.example
 .mail-bridge-tokens.json
+.mail-bridge-state.json
 *.log
