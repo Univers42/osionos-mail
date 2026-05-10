@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Archive,
   BellDot,
@@ -6,6 +6,7 @@ import {
   Bookmark,
   Calendar,
   ChevronRight,
+  Clock3,
   CircleDot,
   Database,
   Filter,
@@ -16,6 +17,8 @@ import {
   Megaphone,
   Paperclip,
   Send,
+  ShieldAlert,
+  ShoppingBag,
   Star,
   Text,
   Trash2,
@@ -31,6 +34,17 @@ import { MailSidebar } from './components/MailSidebar';
 import { MailToolbar } from './components/MailToolbar';
 import { MessagePreview } from './components/MessagePreview';
 import { DEFAULT_HOVER_ACTIONS, DEFAULT_VISIBLE_PROPERTIES, MAIL_PROPERTIES, MOCK_MESSAGES } from './data/mockMail';
+import {
+  applyBridgeAction,
+  bridgeErrorStatus,
+  bridgeSessionToConnector,
+  disconnectBridge,
+  loadBridgeMessage,
+  loadBridgeSession,
+  openBridgeAuth,
+  syncBridgeMessages,
+} from './lib/mailBridge';
+import { clearMailboxCache, loadLatestMailboxCache, loadMailboxCache, saveMailboxCache } from './lib/mailCache';
 import type {
   CommandItem,
   ConnectorState,
@@ -40,6 +54,7 @@ import type {
   MailMessage,
   MailProperty,
   MailViewId,
+  SidebarLabel,
 } from './types';
 
 type OpenMenu =
@@ -59,7 +74,6 @@ const FILTER_OPTIONS: Array<{ id: FilterKey; label: string; icon: CommandItem['i
   { id: 'from', label: 'From', icon: User },
   { id: 'has-attachments', label: 'Has attachments', icon: Paperclip },
   { id: 'date', label: 'Date', icon: Calendar },
-  { id: 'calendar-events', label: 'Only show calendar events', icon: Calendar },
   { id: 'hide-social', label: 'Hide "Social" emails', icon: User },
   { id: 'hide-promotions', label: 'Hide "Promotions" emails', icon: Megaphone },
   { id: 'labels', label: 'Labels', icon: Bookmark },
@@ -81,11 +95,22 @@ const HOVER_ACTION_DETAILS: Record<HoverActionId, { label: string; description: 
   remind: { label: 'Remind', description: 'Hide from inbox until date', icon: Calendar },
 };
 
+function positiveEnvInt(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+const DEFAULT_SYNC_LIMIT = positiveEnvInt(import.meta.env.VITE_GMAIL_SYNC_LIMIT, 2000);
+const SYNC_PAGE_SIZE = positiveEnvInt(import.meta.env.VITE_GMAIL_SYNC_PAGE_SIZE, 100);
+const INITIAL_MAIL_CACHE = loadLatestMailboxCache();
+
 const DEFAULT_CONNECTOR: ConnectorState = {
   provider: 'gmail',
-  account: 'dev.pro.photo@gmail.com',
+  account: 'Not connected',
   endpoint: (import.meta.env.VITE_MAIL_BRIDGE_URL as string | undefined) || 'http://localhost:4100',
   connected: false,
+  bridgeAvailable: false,
+  message: 'Gmail bridge not checked yet',
   lastSync: null,
 };
 
@@ -132,6 +157,41 @@ function sectionMessages(messages: MailMessage[], groupBy: GroupBy): MailSection
   return Array.from(groups.entries()).map(([title, groupedMessages]) => ({ title, messages: groupedMessages }));
 }
 
+function nextActiveMessageId(current: string | null, messages: MailMessage[]) {
+  if (current && messages.some((message) => message.id === current)) return current;
+  return messages[0]?.id ?? null;
+}
+
+function hasGmailMessages(messages: MailMessage[]) {
+  return messages.some((message) => message.source === 'gmail');
+}
+
+function mergeMailMessages(current: MailMessage[], incoming: MailMessage[]) {
+  const merged = new Map<string, MailMessage>();
+  for (const message of current) merged.set(message.id, message);
+  for (const message of incoming) merged.set(message.id, { ...merged.get(message.id), ...message });
+  return Array.from(merged.values()).sort((left, right) => new Date(right.receivedAt).getTime() - new Date(left.receivedAt).getTime());
+}
+
+function replaceMailMessage(current: MailMessage[], replacement: MailMessage) {
+  return current.map((message) => message.id === replacement.id ? { ...message, ...replacement } : message);
+}
+
+function removeSetValue<T>(current: Set<T>, value: T) {
+  const next = new Set(current);
+  next.delete(value);
+  return next;
+}
+
+function clampReaderWidth(value: number) {
+  const viewportLimit = Math.max(360, globalThis.innerWidth - 420);
+  return Math.min(Math.max(value, 360), Math.min(860, viewportLimit));
+}
+
+function estimatedTotalText(estimate: number, actualCount: number) {
+  return estimate > actualCount ? ` of about ${estimate.toLocaleString()}` : '';
+}
+
 function includesAny(values: string[], accepted: string[]) {
   if (!accepted.length) return true;
   return values.some((value) => accepted.includes(value));
@@ -146,14 +206,37 @@ function propertyIcon(property: MailProperty): CommandItem['icon'] {
   return Text;
 }
 
+function isPurchaseMessage(message: MailMessage) {
+  return message.category === 'Purchases' || message.labels.some((label) => /purchase|achat/i.test(label));
+}
+
+function messageMatchesView(message: MailMessage, activeView: MailViewId, showArchived: boolean, activeLabel: string | null) {
+  switch (activeView) {
+    case 'inbox': return message.mailbox === 'inbox' && (showArchived || !message.archived);
+    case 'starred': return message.starred;
+    case 'snoozed': return message.mailbox === 'snoozed' || Boolean(message.remindedUntil);
+    case 'sent': return message.mailbox === 'sent' || message.sent;
+    case 'labels': return activeLabel ? message.labels.includes(activeLabel) : message.labels.length > 0;
+    case 'all-mail': return message.mailbox !== 'trash' && message.mailbox !== 'spam' && (showArchived || !message.archived);
+    case 'drafts': return message.mailbox === 'drafts';
+    case 'important': return message.important;
+    case 'scheduled': return message.mailbox === 'scheduled';
+    case 'purchases': return isPurchaseMessage(message);
+    case 'spam': return message.mailbox === 'spam';
+    case 'trash': return message.mailbox === 'trash';
+    default: return true;
+  }
+}
+
 export const App: React.FC = () => {
-  const [messages, setMessages] = useState<MailMessage[]>(MOCK_MESSAGES);
+  const [messages, setMessages] = useState<MailMessage[]>(() => INITIAL_MAIL_CACHE?.messages.length ? INITIAL_MAIL_CACHE.messages : MOCK_MESSAGES);
   const [activeView, setActiveView] = useState<MailViewId>('inbox');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [activeMessageId, setActiveMessageId] = useState<string | null>(MOCK_MESSAGES[0]?.id ?? null);
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(() => INITIAL_MAIL_CACHE?.activeMessageId ?? INITIAL_MAIL_CACHE?.messages[0]?.id ?? MOCK_MESSAGES[0]?.id ?? null);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<FilterKey[]>([]);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -165,7 +248,46 @@ export const App: React.FC = () => {
   const [composerOpen, setComposerOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [status, setStatus] = useState('Local mock database ready');
+  const [hasAutoSynced, setHasAutoSynced] = useState(false);
+  const [syncCursor, setSyncCursor] = useState(INITIAL_MAIL_CACHE?.nextPageToken ?? '');
+  const [syncHasMore, setSyncHasMore] = useState(Boolean(INITIAL_MAIL_CACHE?.hasMore));
+  const [syncEstimate, setSyncEstimate] = useState(INITIAL_MAIL_CACHE?.resultSizeEstimate ?? 0);
+  const [loadingBodyIds, setLoadingBodyIds] = useState<Set<string>>(new Set());
+  const [readerWidth, setReaderWidth] = useState(520);
+  const [status, setStatus] = useState(() => INITIAL_MAIL_CACHE?.messages.length
+    ? `Loaded ${INITIAL_MAIL_CACHE.messages.length.toLocaleString()} cached Gmail messages; refresh continues from the saved cursor.`
+    : 'Gmail bridge ready; mock inbox loaded until you sync localhost');
+
+  useEffect(() => {
+    let cancelled = false;
+    loadBridgeSession(connector.endpoint)
+      .then((session) => {
+        if (cancelled) return;
+        setConnector((current) => bridgeSessionToConnector(connector.endpoint, current, session));
+        if (session.connected) {
+          const cached = loadMailboxCache(connector.endpoint, session.account);
+          if (cached?.messages.length) {
+            setMessages(cached.messages);
+            setActiveMessageId((current) => nextActiveMessageId(current ?? cached.activeMessageId, cached.messages));
+            setSyncCursor(cached.nextPageToken);
+            setSyncHasMore(cached.hasMore);
+            setSyncEstimate(cached.resultSizeEstimate);
+            setHasAutoSynced(true);
+            setStatus(`Loaded ${cached.messages.length.toLocaleString()} cached Gmail messages for ${session.account}; refresh continues from the saved cursor.`);
+            return;
+          }
+        }
+        setStatus(session.connected ? `Gmail bridge connected as ${session.account}` : session.message || 'Gmail bridge is reachable');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setConnector((current) => ({ ...current, bridgeAvailable: false, connected: false, message: bridgeErrorStatus(error) }));
+        setStatus(`${bridgeErrorStatus(error)}. Using mock messages until the bridge starts.`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connector.endpoint]);
 
   const categories = useMemo(
     () => Array.from(new Set(messages.map((message) => message.category))).sort((left, right) => left.localeCompare(right)),
@@ -176,53 +298,203 @@ export const App: React.FC = () => {
     [messages],
   );
 
+  const sidebarLabels = useMemo<SidebarLabel[]>(() => labels.map((label) => ({
+    id: label,
+    label,
+    count: messages.filter((message) => message.labels.includes(label)).length,
+  })).filter((label) => label.count > 0).slice(0, 10), [labels, messages]);
+
   const counts = useMemo<Partial<Record<MailViewId, number>>>(() => ({
     inbox: messages.filter((message) => message.mailbox === 'inbox' && !message.archived).length,
+    starred: messages.filter((message) => message.starred).length,
+    snoozed: messages.filter((message) => message.mailbox === 'snoozed' || message.remindedUntil).length,
+    sent: messages.filter((message) => message.mailbox === 'sent' || message.sent).length,
     labels: messages.filter((message) => message.labels.length > 0).length,
     'all-mail': messages.filter((message) => message.mailbox !== 'trash' && message.mailbox !== 'spam').length,
     drafts: messages.filter((message) => message.mailbox === 'drafts').length,
+    important: messages.filter((message) => message.important).length,
+    scheduled: messages.filter((message) => message.mailbox === 'scheduled').length,
+    purchases: messages.filter(isPurchaseMessage).length,
     spam: messages.filter((message) => message.mailbox === 'spam').length,
     trash: messages.filter((message) => message.mailbox === 'trash').length,
   }), [messages]);
 
   const visibleMessages = useMemo(() => {
     return messages
-      .filter((message) => {
-        if (activeView === 'inbox') return message.mailbox === 'inbox' && (showArchived || !message.archived);
-        if (activeView === 'labels') return message.labels.length > 0 && (showArchived || !message.archived);
-        if (activeView === 'all-mail') return message.mailbox !== 'trash' && message.mailbox !== 'spam' && (showArchived || !message.archived);
-        if (activeView === 'drafts') return message.mailbox === 'drafts';
-        if (activeView === 'spam') return message.mailbox === 'spam';
-        if (activeView === 'trash') return message.mailbox === 'trash';
-        if (activeView === 'notion-calendar') return message.calendarEvent;
-        return true;
-      })
+      .filter((message) => messageMatchesView(message, activeView, showArchived, activeLabel))
       .filter((message) => !unreadOnly || message.unread)
       .filter((message) => includesAny([message.category], selectedCategories))
       .filter((message) => includesAny(message.labels, selectedLabels))
       .filter((message) => !activeFilters.includes('has-attachments') || message.hasAttachments)
-      .filter((message) => !activeFilters.includes('calendar-events') || message.calendarEvent)
       .filter((message) => !activeFilters.includes('hide-social') || message.category !== 'Social')
       .filter((message) => !activeFilters.includes('hide-promotions') || message.category !== 'Promotions')
       .filter((message) => !activeFilters.includes('show-sent') || message.sent)
       .filter((message) => !activeFilters.includes('show-archived') || message.archived)
       .sort((left, right) => new Date(right.receivedAt).getTime() - new Date(left.receivedAt).getTime());
-  }, [activeFilters, activeView, messages, selectedCategories, selectedLabels, showArchived, unreadOnly]);
+  }, [activeFilters, activeLabel, activeView, messages, selectedCategories, selectedLabels, showArchived, unreadOnly]);
 
   const sections = useMemo(() => sectionMessages(visibleMessages, groupBy), [groupBy, visibleMessages]);
   const activeMessage = messages.find((message) => message.id === activeMessageId) ?? null;
+  const activeVisibleIndex = useMemo(
+    () => visibleMessages.findIndex((message) => message.id === activeMessageId),
+    [activeMessageId, visibleMessages],
+  );
 
-  const runRefresh = () => {
+  const navigateMessage = useCallback((direction: 'previous' | 'next') => {
+    if (activeVisibleIndex < 0) return;
+    const nextIndex = direction === 'previous' ? activeVisibleIndex - 1 : activeVisibleIndex + 1;
+    const nextMessage = visibleMessages[nextIndex];
+    if (!nextMessage) return;
+    setActiveMessageId(nextMessage.id);
+    setMessages((current) => current.map((message) => message.id === nextMessage.id ? { ...message, unread: false } : message));
+  }, [activeVisibleIndex, visibleMessages]);
+
+  const runRefresh = useCallback(async () => {
     setIsSyncing(true);
-    setStatus('Refreshing localhost bridge...');
-    globalThis.setTimeout(() => {
-      setConnector((current) => ({ ...current, connected: true, lastSync: new Date().toISOString() }));
-      setStatus('Mailbox refreshed from localhost mock bridge');
+    setStatus('Checking Gmail bridge before fetching the next mailbox page...');
+    try {
+      const session = await loadBridgeSession(connector.endpoint);
+      setConnector((current) => bridgeSessionToConnector(connector.endpoint, current, session));
+      if (!session.connected) {
+        setConnectorOpen(true);
+        setStatus('Gmail is configured but not authorized yet. Connect Gmail first, then refresh to replace the mock inbox.');
+        return;
+      }
+
+      const account = session.account || connector.account;
+      const baseMessages = hasGmailMessages(messages) ? messages : [];
+      if (baseMessages.length >= DEFAULT_SYNC_LIMIT) {
+        setStatus(`Cached Gmail mailbox already reached the ${DEFAULT_SYNC_LIMIT.toLocaleString()} message local limit.`);
+        return;
+      }
+      if (baseMessages.length > 0 && !syncCursor && !syncHasMore) {
+        setStatus(`Cached Gmail mailbox has ${baseMessages.length.toLocaleString()} messages and no saved next page.`);
+        return;
+      }
+
+      const remaining = DEFAULT_SYNC_LIMIT - baseMessages.length;
+      const pageLimit = Math.min(SYNC_PAGE_SIZE, remaining);
+      setStatus(syncCursor
+        ? `Fetching the next ${pageLimit.toLocaleString()} Gmail headers from the saved cursor...`
+        : `Fetching the latest ${pageLimit.toLocaleString()} Gmail headers...`);
+
+      const synced = await syncBridgeMessages(connector.endpoint, pageLimit, syncCursor, false);
+      const mergedMessages = mergeMailMessages(baseMessages, synced.messages);
+      const nextCursor = synced.nextPageToken || '';
+      const nextHasMore = Boolean(synced.nextPageToken);
+      const nextEstimate = Math.max(syncEstimate, synced.resultSizeEstimate || 0);
+      const activeId = nextActiveMessageId(activeMessageId, mergedMessages);
+
+      setMessages(mergedMessages);
+      setSelectedIds(new Set());
+      setActiveMessageId(activeId);
+      setSyncCursor(nextCursor);
+      setSyncHasMore(nextHasMore);
+      setSyncEstimate(nextEstimate);
+      setConnector((current) => ({
+        ...current,
+        provider: 'gmail',
+        account,
+        connected: true,
+        bridgeAvailable: true,
+        message: 'Gmail headers loaded through localhost bridge',
+        lastSync: synced.syncedAt,
+      }));
+      saveMailboxCache({
+        endpoint: connector.endpoint,
+        account,
+        syncedAt: synced.syncedAt,
+        nextPageToken: nextCursor,
+        hasMore: nextHasMore,
+        resultSizeEstimate: nextEstimate,
+        activeMessageId: activeId,
+        messages: mergedMessages,
+      });
+
+      const estimate = estimatedTotalText(nextEstimate, mergedMessages.length);
+      const more = nextHasMore ? ' Refresh again to continue from this point.' : '';
+      setStatus(`Loaded ${synced.messages.length.toLocaleString()} Gmail headers; cache now has ${mergedMessages.length.toLocaleString()}${estimate} messages from ${account}.${more}`);
+    } catch (error) {
+      setConnector((current) => ({ ...current, bridgeAvailable: false, connected: false, message: bridgeErrorStatus(error) }));
+      setStatus(`${bridgeErrorStatus(error)}. Mock inbox is still available.`);
+    } finally {
       setIsSyncing(false);
-    }, 450);
-  };
+    }
+  }, [activeMessageId, connector.account, connector.endpoint, messages, syncCursor, syncEstimate, syncHasMore]);
+
+  useEffect(() => {
+    if (!connector.connected || hasAutoSynced || isSyncing) return;
+    setHasAutoSynced(true);
+    runRefresh();
+  }, [connector.connected, hasAutoSynced, isSyncing, runRefresh]);
+
+  useEffect(() => {
+    if (!activeMessage?.providerMessageId || activeMessage.source !== 'gmail' || activeMessage.bodyLoaded) return;
+    let cancelled = false;
+    setLoadingBodyIds((current) => new Set(current).add(activeMessage.id));
+    setStatus(`Loading original Gmail content for "${activeMessage.subject}"...`);
+    loadBridgeMessage(connector.endpoint, activeMessage.providerMessageId)
+      .then((payload) => {
+        if (cancelled) return;
+        setMessages((current) => replaceMailMessage(current, payload.message));
+        setStatus(`Loaded original Gmail content for "${payload.message.subject}".`);
+      })
+      .catch((error) => {
+        if (!cancelled) setStatus(bridgeErrorStatus(error));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingBodyIds((current) => removeSetValue(current, activeMessage.id));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMessage?.bodyLoaded, activeMessage?.id, activeMessage?.providerMessageId, activeMessage?.source, activeMessage?.subject, connector.endpoint]);
+
+  const startBridgeAuth = useCallback(() => {
+    try {
+      openBridgeAuth(connector.endpoint, connector.provider);
+      setStatus(`Opened ${connector.provider} authorization. Return here and refresh after approval.`);
+    } catch (error) {
+      setStatus(bridgeErrorStatus(error));
+    }
+  }, [connector.endpoint, connector.provider]);
+
+  const disconnectProvider = useCallback(async () => {
+    try {
+      const session = await disconnectBridge(connector.endpoint);
+      setConnector((current) => bridgeSessionToConnector(connector.endpoint, current, session));
+      clearMailboxCache(connector.endpoint, connector.account);
+      setMessages(MOCK_MESSAGES);
+      setActiveMessageId(MOCK_MESSAGES[0]?.id ?? null);
+      setSyncCursor('');
+      setSyncHasMore(false);
+      setSyncEstimate(0);
+      setHasAutoSynced(false);
+      setStatus('Disconnected Gmail and restored the mock inbox');
+    } catch (error) {
+      setStatus(bridgeErrorStatus(error));
+    }
+  }, [connector.endpoint]);
+
+  const startReaderResize = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = readerWidth;
+    const moveReader = (moveEvent: PointerEvent) => {
+      setReaderWidth(clampReaderWidth(startWidth + startX - moveEvent.clientX));
+    };
+    const stopReader = () => {
+      globalThis.document.body.classList.remove('mail-reader-resizing');
+      globalThis.removeEventListener('pointermove', moveReader);
+      globalThis.removeEventListener('pointerup', stopReader);
+    };
+    globalThis.document.body.classList.add('mail-reader-resizing');
+    globalThis.addEventListener('pointermove', moveReader);
+    globalThis.addEventListener('pointerup', stopReader, { once: true });
+  }, [readerWidth]);
 
   const runHoverAction = (id: string, action: HoverActionId) => {
+    const targetMessage = messages.find((message) => message.id === id);
     setMessages((current) => current.map((message) => {
       if (message.id !== id) return message;
       if (action === 'star') return { ...message, starred: !message.starred };
@@ -232,6 +504,9 @@ export const App: React.FC = () => {
       return { ...message, remindedUntil: new Date(Date.now() + 86400000).toISOString(), archived: true };
     }));
     setStatus(`${HOVER_ACTION_DETAILS[action].label} action applied`);
+    if (targetMessage?.providerMessageId) {
+      applyBridgeAction(connector.endpoint, targetMessage, action).catch((error) => setStatus(bridgeErrorStatus(error)));
+    }
   };
 
   const toggleSelectAll = () => {
@@ -252,8 +527,9 @@ export const App: React.FC = () => {
     setMessages((current) => current.map((message) => {
       const nextLabels = new Set(message.labels);
       if (message.fromEmail.includes('github')) nextLabels.add('Builds');
-      if (message.calendarEvent) nextLabels.add('Calendar');
+      if (message.calendarEvent) nextLabels.add('Invites');
       if (message.category === 'Promotions') nextLabels.add('Promotions');
+      if (message.category === 'Purchases') nextLabels.add('Purchases');
       if (message.important) nextLabels.add('Needs reply');
       return { ...message, labels: Array.from(nextLabels) };
     }));
@@ -284,9 +560,13 @@ export const App: React.FC = () => {
 
   const viewItems: CommandItem[] = [
     { id: 'inbox', label: 'Inbox', icon: Inbox, active: activeView === 'inbox', onClick: () => { setActiveView('inbox'); setOpenMenu(null); } },
+    { id: 'starred', label: 'Starred', icon: Star, active: activeView === 'starred', onClick: () => { setActiveView('starred'); setOpenMenu(null); } },
+    { id: 'snoozed', label: 'Snoozed', icon: Clock3, active: activeView === 'snoozed', onClick: () => { setActiveView('snoozed'); setOpenMenu(null); } },
+    { id: 'sent', label: 'Sent', icon: Send, active: activeView === 'sent', onClick: () => { setActiveView('sent'); setOpenMenu(null); } },
     { id: 'labels', label: 'Labels', icon: Bookmark, active: activeView === 'labels', onClick: () => { setActiveView('labels'); setOpenMenu(null); } },
+    { id: 'important', label: 'Important', icon: ShieldAlert, active: activeView === 'important', onClick: () => { setActiveView('important'); setOpenMenu(null); } },
+    { id: 'purchases', label: 'Purchases', icon: ShoppingBag, active: activeView === 'purchases', onClick: () => { setActiveView('purchases'); setOpenMenu(null); } },
     { id: 'all-mail', label: 'All Mail', icon: Mail, active: activeView === 'all-mail', onClick: () => { setActiveView('all-mail'); setOpenMenu(null); } },
-    { id: 'notion-calendar', label: 'Notion Calendar', icon: Calendar, active: activeView === 'notion-calendar', onClick: () => { setActiveView('notion-calendar'); setOpenMenu(null); } },
   ];
 
   const selectItems: CommandItem[] = [
@@ -377,7 +657,7 @@ export const App: React.FC = () => {
           }))}
           footer={(
             <button className="mail-primary-button mail-menu-wide-button" type="button" onClick={runRefresh}>
-              Sync database from bridge
+              Sync Gmail from bridge
             </button>
           )}
         />
@@ -394,7 +674,7 @@ export const App: React.FC = () => {
             <span>Hover actions</span>
           </div>
           <div className="mail-hover-preview">
-            <span><CircleDot size={20} /> Notion</span>
+            <span><CircleDot size={20} /> Gmail</span>
             <strong>Welcome to mail!</strong>
             <div>
               {hoverActions.map((action) => {
@@ -440,10 +720,18 @@ export const App: React.FC = () => {
         activeView={activeView}
         counts={counts}
         connector={connector}
+        labels={sidebarLabels}
+        activeLabel={activeLabel}
         onViewChange={(view) => {
           setActiveView(view);
+          if (view !== 'labels') setActiveLabel(null);
           if (view === 'settings') setConnectorOpen(true);
           if (view === 'support') setSupportOpen(true);
+        }}
+        onLabelChange={(label) => {
+          setActiveView('labels');
+          setActiveLabel(label);
+          setSelectedLabels([]);
         }}
         onCompose={() => setComposerOpen(true)}
         onOpenConnector={() => setConnectorOpen(true)}
@@ -479,7 +767,10 @@ export const App: React.FC = () => {
           {openMenu ? <div className="mail-menu-layer">{renderMenu()}</div> : null}
         </div>
 
-        <div className="mail-workspace">
+        <div
+          className={activeMessage ? 'mail-workspace mail-workspace--reader-open' : 'mail-workspace'}
+          style={{ '--mail-reader-width': `${readerWidth}px` } as React.CSSProperties}
+        >
           <section className="mail-page">
             <MailList
               sections={sections}
@@ -496,7 +787,18 @@ export const App: React.FC = () => {
               onRunAction={runHoverAction}
             />
           </section>
-          <MessagePreview message={activeMessage} onClose={() => setActiveMessageId(null)} onRunAction={runHoverAction} />
+          {activeMessage ? (
+            <MessagePreview
+              message={activeMessage}
+              bodyLoading={loadingBodyIds.has(activeMessage.id)}
+              hasPrevious={activeVisibleIndex > 0}
+              hasNext={activeVisibleIndex >= 0 && activeVisibleIndex < visibleMessages.length - 1}
+              onClose={() => setActiveMessageId(null)}
+              onNavigate={navigateMessage}
+              onResizeStart={startReaderResize}
+              onRunAction={runHoverAction}
+            />
+          ) : null}
         </div>
 
         <footer className="mail-statusbar">
@@ -511,6 +813,8 @@ export const App: React.FC = () => {
           onChange={setConnector}
           onClose={() => setConnectorOpen(false)}
           onSync={runRefresh}
+          onStartAuth={startBridgeAuth}
+          onDisconnect={disconnectProvider}
         />
       ) : null}
       {composerOpen ? <ComposerModal onClose={() => setComposerOpen(false)} onCreateDraft={(draft) => setMessages((current) => [draft, ...current])} /> : null}
