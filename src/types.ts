@@ -80,6 +80,7 @@ export interface MailMessage {
   sent: boolean;
   rawLabelIds?: string[];
   bodyHtml?: string;
+  bodyLoaded?: boolean;
   remindedUntil?: string;
 }
 
