@@ -15,6 +15,7 @@ docker compose up --build mail mail-bridge
 Or use the root convenience targets:
 
 ```sh
+make all
 make mail-up
 npm run dev:all
 ```
@@ -27,16 +28,7 @@ If port `3002` is already held by an older host Vite process, stop that process 
 MAIL_HOST_PORT=3003 docker compose up --build mail mail-bridge
 ```
 
-## Run locally without Docker
-
-```sh
-npm install
-npm run dev:all
-```
-
-Open `http://localhost:3002`.
-
-`npm run dev` starts only the Vite UI. `npm run bridge` starts only the localhost mail bridge on `http://localhost:4100`.
+The root stack builds stable local images named `track-binocle/mail:local` and `track-binocle/mail-bridge:local` unless overridden through Compose image variables.
 
 ## Connect Gmail from localhost
 
