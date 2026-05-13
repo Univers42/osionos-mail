@@ -20,7 +20,7 @@ make mail-up
 npm run dev:all
 ```
 
-Open `http://localhost:3002`. The bridge runs on `http://localhost:4100`.
+Open `https://localhost:3002`. The bridge runs on `https://localhost:4100` in the root stack.
 
 If port `3002` is already held by an older host Vite process, stop that process first or run with another host port:
 
@@ -35,19 +35,19 @@ The root stack builds stable local images named `track-binocle/mail:local` and `
 Create a Google OAuth client with this redirect URI:
 
 ```txt
-http://localhost:4100/auth/gmail/callback
+https://localhost:4100/auth/gmail/callback
 ```
 
 The redirect URI in Google Console must match `GMAIL_REDIRECT_URI` exactly. By default the bridge accepts only the callback path from that one redirect URI:
 
 ```txt
-http://localhost:4100/auth/gmail/callback
+https://localhost:4100/auth/gmail/callback
 ```
 
 Vite also proxies `/auth`, `/api/auth`, `/mail/bridge`, and `/api/mail/bridge` to the bridge in development. If you intentionally want Google to return through the UI port, set both Google Console and `.env.local` to the same value, then add that callback path to `GMAIL_CALLBACK_PATHS`, for example:
 
 ```sh
-GMAIL_REDIRECT_URI=http://localhost:3002/api/auth/callback/google
+GMAIL_REDIRECT_URI=https://localhost:3002/api/auth/callback/google
 GMAIL_CALLBACK_PATHS=/api/auth/callback/google
 ```
 
@@ -97,7 +97,7 @@ Provide either `VAULT_TOKEN` for local development or `VAULT_ROLE_ID` plus `VAUL
 docker compose up --build mail mail-bridge
 ```
 
-The dev stack serves the app at `http://localhost:3002` and the bridge at `http://localhost:4100`. Put `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `apps/mail/.env.local`, or enable the Vault lookup described above.
+The root dev stack serves the app at `https://localhost:3002` and the bridge at `https://localhost:4100`. Put `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `apps/mail/.env.local`, or enable the Vault lookup described above.
 
 ## Connector bridge shape
 
