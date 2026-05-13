@@ -3,6 +3,9 @@ dist/
 .env
 .env.*
 !.env.example
+.env*local
+.env\ copy*
+.vault/
 .mail-bridge-tokens.json
 .mail-bridge-state.json
 *.log
