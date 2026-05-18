@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /* ************************************************************************** */
 /*                                                                            */
 /*                                                        :::      ::::::::   */
@@ -10,7 +11,6 @@
 /*                                                                            */
 /* ************************************************************************** */
 
-#!/usr/bin/env node
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
