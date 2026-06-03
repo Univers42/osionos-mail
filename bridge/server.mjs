@@ -15,7 +15,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -56,6 +56,24 @@ const callbackPaths = new Set([
 const gmailScopes = [
   'https://www.googleapis.com/auth/gmail.modify',
 ];
+
+// BaaS mirror config: the bridge writes fetched Gmail data to the BaaS (mail_accounts /
+// mail_messages) with the service role so osionos/other apps can query it uniformly. The
+// bridge loads ONLY its own .env(.local), so set MAIL_BAAS_SERVICE_KEY here (= the BaaS
+// SERVICE_ROLE_KEY). URL: http://127.0.0.1:8000 for host-run (npm run dev:all), or
+// http://kong:8000 when the bridge runs inside the BaaS docker network.
+const baasUrl = (process.env.MAIL_BAAS_URL || '').replace(/\/+$/, '');
+const baasPublicUrl = process.env.MAIL_BAAS_PUBLIC_URL || process.env.VITE_MAIL_BAAS_URL || 'http://localhost:8000';
+const baasServiceKey = process.env.MAIL_BAAS_SERVICE_KEY || process.env.KONG_SERVICE_API_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const requireBaaS = process.env.MAIL_BRIDGE_REQUIRE_BAAS === 'true';
+const baasMirrorTimeoutMs = positiveInt(process.env.MAIL_BAAS_TIMEOUT_MS, 10000);
+const baasMirrorChunkSize = positiveInt(process.env.MAIL_BAAS_CHUNK_SIZE, 300);
+const baasRuntime = {
+  configured: Boolean(baasUrl),
+  connected: false,
+  url: baasPublicUrl,
+  message: baasUrl ? 'BaaS backend configured; no mirror has run yet.' : 'BaaS backend URL is not configured.',
+};
 
 function positiveInt(value, fallback) {
   const parsed = Number(value);
@@ -246,6 +264,7 @@ function publicSession(extra = {}) {
     lastSync: tokens?.lastSync || null,
     message,
     callback: callbackDebug(),
+    baas: { ...baasRuntime },
     ...extra,
   };
 }
@@ -555,6 +574,112 @@ async function currentAccount() {
   return profile.emailAddress || '';
 }
 
+function deterministicUuid(value) {
+  const bytes = createHash('sha256').update(value).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function baasHeaders(prefer = '') {
+  if (!baasServiceKey) throw new Error('BaaS service key is not configured for mail mirroring');
+  return {
+    'Content-Type': 'application/json',
+    apikey: baasServiceKey,
+    Authorization: `Bearer ${baasServiceKey}`,
+    ...(prefer ? { Prefer: prefer } : {}),
+  };
+}
+
+async function baasRequest(path, options = {}) {
+  if (!baasUrl) throw new Error('BaaS URL is not configured');
+  const response = await fetch(`${baasUrl}${path}`, {
+    method: options.method || 'GET',
+    headers: baasHeaders(options.prefer),
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    signal: AbortSignal.timeout(baasMirrorTimeoutMs), // never let a hung BaaS wedge the bridge
+  });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(payload?.message || payload?.hint || `BaaS request failed with HTTP ${response.status}`);
+  return payload;
+}
+
+async function postgrestUpsert(table, records, onConflict) {
+  if (!records.length) return;
+  const query = onConflict ? `?on_conflict=${encodeURIComponent(onConflict)}` : '';
+  await baasRequest(`/rest/v1/${table}${query}`, {
+    method: 'POST',
+    prefer: 'resolution=merge-duplicates,return=minimal',
+    body: records,
+  });
+}
+
+/** Map a normalized message to a mail_messages row. */
+function messageRecord(accountId, account, message) {
+  return {
+    id: deterministicUuid(`gmail:${account}:${message.providerMessageId || message.id}`),
+    account_id: accountId,
+    provider_message_id: message.providerMessageId || message.id,
+    thread_id: message.threadId || '',
+    subject: message.subject || '',
+    from_name: message.fromName || '',
+    from_email: message.fromEmail || '',
+    to_addrs: message.to || [],
+    cc_addrs: message.cc || [],
+    bcc_addrs: message.bcc || [],
+    snippet: message.snippet || '',
+    mailbox: message.mailbox || '',
+    labels: message.labels || [],
+    category: message.category || '',
+    priority: message.priority || 'normal',
+    is_unread: Boolean(message.unread),
+    is_starred: Boolean(message.starred),
+    is_important: Boolean(message.important),
+    is_sent: Boolean(message.sent),
+    is_archived: Boolean(message.archived),
+    has_attachments: Boolean(message.hasAttachments),
+    received_at: message.receivedAt || new Date().toISOString(),
+    // Metadata only — keep raw bodies out of the mirror (the structured columns above carry
+    // what other apps query; bodies stay in Gmail to limit PII concentration in the cache).
+    source_payload: { ...message, body: undefined, bodyHtml: undefined },
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Mirror the fetched Gmail snapshot into the BaaS (mail_accounts + mail_messages) with the
+ * service role. No-op until configured (URL + service key + account). Never breaks the mail
+ * response unless MAIL_BRIDGE_REQUIRE_BAAS=true: a mirror failure is logged and swallowed so
+ * Gmail stays usable when the BaaS is down. Idempotent (upsert on the provider keys).
+ */
+async function mirrorMessagesToBaaS(account, messages) {
+  if (!baasUrl || !baasServiceKey || !account) return { ...baasRuntime };
+  try {
+    const accountId = deterministicUuid(`gmail:${account}`);
+    await postgrestUpsert('mail_accounts', [{
+      id: accountId, provider: 'gmail', account_email: account, display_name: account, last_seen_at: new Date().toISOString(),
+    }], 'provider,account_email');
+    const records = messages
+      .map((message) => messageRecord(accountId, account, message))
+      .filter((record) => record.provider_message_id);
+    // Chunk so a large sync (up to GMAIL_MAX_SYNC_LIMIT) never becomes one oversized POST.
+    for (let start = 0; start < records.length; start += baasMirrorChunkSize) {
+      await postgrestUpsert('mail_messages', records.slice(start, start + baasMirrorChunkSize), 'account_id,provider_message_id');
+    }
+    baasRuntime.connected = true;
+    baasRuntime.message = `Mirrored ${records.length} messages to BaaS.`;
+    return { ...baasRuntime };
+  } catch (error) {
+    baasRuntime.connected = false;
+    baasRuntime.message = error instanceof Error ? error.message : 'BaaS mirror failed';
+    if (requireBaaS) throw error;
+    console.warn(`[mail-bridge] BaaS mirror skipped: ${baasRuntime.message}`);
+    return { ...baasRuntime };
+  }
+}
+
 async function loadMessages(limit, includeBodies = false) {
   const labelMap = await loadLabelMap();
   const list = await loadMessageList(limit);
@@ -564,6 +689,8 @@ async function loadMessages(limit, includeBodies = false) {
   const account = await currentAccount();
   const currentTokens = tokens ?? {};
   writeTokens({ ...currentTokens, account, lastSync: new Date().toISOString() });
+  // Fire-and-forget: the inbox is already fetched; never block it on the BaaS mirror.
+  void mirrorMessagesToBaaS(account, normalized).catch((error) => console.warn(`[mail-bridge] BaaS mirror failed: ${error?.message ?? error}`));
   return {
     account,
     messages: normalized,
@@ -583,6 +710,8 @@ async function loadMessagePage(limit, pageToken, includeBodies = false) {
   const account = await currentAccount();
   const currentTokens = tokens ?? {};
   writeTokens({ ...currentTokens, account, lastSync: new Date().toISOString() });
+  // Fire-and-forget: the inbox is already fetched; never block it on the BaaS mirror.
+  void mirrorMessagesToBaaS(account, normalized).catch((error) => console.warn(`[mail-bridge] BaaS mirror failed: ${error?.message ?? error}`));
   return {
     account,
     messages: normalized,
