@@ -1,0 +1,36 @@
+# The app's own gate: what a release must pass, nothing vacuous. Reproduced green in
+# node:22-alpine before this workflow existed (npm ci, tsc --noEmit clean, vite build ok).
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-build:
+    name: tsc --noEmit + vite build (node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install from the lockfile
+        run: npm ci --no-audit --no-fund
+      - name: Bridge parses
+        run: node --check bridge/server.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
