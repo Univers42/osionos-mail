@@ -39,6 +39,7 @@ import {
 
 import { CommandMenu } from './components/CommandMenu';
 import { ComposerModal } from './components/ComposerModal';
+import { isBridgeEnabled, PREVIEW_NOTICE, resolveBridgeEndpoint } from './lib/bridgeConfig';
 import { ConnectorModal } from './components/ConnectorModal';
 import { FilterBar } from './components/FilterBar';
 import { MailList, type MailSection } from './components/MailList';
@@ -114,12 +115,14 @@ function positiveEnvInt(value: unknown, fallback: number) {
 
 const DEFAULT_SYNC_LIMIT = positiveEnvInt(import.meta.env.VITE_GMAIL_SYNC_LIMIT, 2000);
 const SYNC_PAGE_SIZE = positiveEnvInt(import.meta.env.VITE_GMAIL_SYNC_PAGE_SIZE, 100);
-const INITIAL_MAIL_CACHE = loadLatestMailboxCache();
+const BRIDGE_ENDPOINT = resolveBridgeEndpoint(import.meta.env.VITE_MAIL_BRIDGE_URL as string | undefined, import.meta.env.DEV);
+// A cached Gmail mailbox belongs to a connected bridge; a preview shows sample data only.
+const INITIAL_MAIL_CACHE = isBridgeEnabled(BRIDGE_ENDPOINT) ? loadLatestMailboxCache() : null;
 
 const DEFAULT_CONNECTOR: ConnectorState = {
   provider: 'gmail',
   account: 'Not connected',
-  endpoint: (import.meta.env.VITE_MAIL_BRIDGE_URL as string | undefined) || 'http://localhost:4100',
+  endpoint: BRIDGE_ENDPOINT,
   connected: false,
   bridgeAvailable: false,
   message: 'Gmail bridge not checked yet',
@@ -268,9 +271,12 @@ export const App: React.FC = () => {
   const [readerWidth, setReaderWidth] = useState(520);
   const [status, setStatus] = useState(() => INITIAL_MAIL_CACHE?.messages.length
     ? `Loaded ${INITIAL_MAIL_CACHE.messages.length.toLocaleString()} cached Gmail messages; refresh continues from the saved cursor.`
-    : 'Gmail bridge ready; mock inbox loaded until you sync localhost');
+    : isBridgeEnabled(BRIDGE_ENDPOINT)
+      ? 'Gmail bridge ready; mock inbox loaded until you sync localhost'
+      : PREVIEW_NOTICE);
 
   useEffect(() => {
+    if (!isBridgeEnabled(connector.endpoint)) return undefined;
     let cancelled = false;
     loadBridgeSession(connector.endpoint)
       .then((session) => {
@@ -362,6 +368,7 @@ export const App: React.FC = () => {
   }, [activeVisibleIndex, visibleMessages]);
 
   const runRefresh = useCallback(async () => {
+    if (!isBridgeEnabled(connector.endpoint)) return;
     setIsSyncing(true);
     setStatus('Checking Gmail bridge before fetching the next mailbox page...');
     try {
@@ -737,7 +744,7 @@ export const App: React.FC = () => {
         onViewChange={(view) => {
           setActiveView(view);
           if (view !== 'labels') setActiveLabel(null);
-          if (view === 'settings') setConnectorOpen(true);
+          if (view === 'settings' && isBridgeEnabled(connector.endpoint)) setConnectorOpen(true);
           if (view === 'support') setSupportOpen(true);
         }}
         onLabelChange={(label) => {
@@ -746,7 +753,7 @@ export const App: React.FC = () => {
           setSelectedLabels([]);
         }}
         onCompose={() => setComposerOpen(true)}
-        onOpenConnector={() => setConnectorOpen(true)}
+        onOpenConnector={() => setConnectorOpen(isBridgeEnabled(connector.endpoint))}
         onOpenSupport={() => setSupportOpen(true)}
       />
 
@@ -819,7 +826,7 @@ export const App: React.FC = () => {
         </footer>
       </main>
 
-      {connectorOpen ? (
+      {connectorOpen && isBridgeEnabled(connector.endpoint) ? (
         <ConnectorModal
           connector={connector}
           onChange={setConnector}

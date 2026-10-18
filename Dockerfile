@@ -7,6 +7,8 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 
 FROM deps AS build
 WORKDIR /app
+# Empty by default: a static preview build ships without any bridge URL (see src/lib/bridgeConfig.ts).
+ARG VITE_MAIL_BRIDGE_URL=
 COPY . .
 RUN npm run build
 

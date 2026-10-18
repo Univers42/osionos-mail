@@ -10,6 +10,7 @@
 /*                                                                            */
 /* ************************************************************************** */
 
+import { isBridgeEnabled } from './bridgeConfig';
 import type { ConnectorState, HoverActionId, MailMessage, MailProvider } from '../types';
 
 export interface BridgeSessionResponse {
@@ -43,6 +44,13 @@ function bridgeBase(endpoint: string) {
   return endpoint.trim().replace(/\/+$/, '');
 }
 
+// Single exit to the network: every bridge call passes here, so an empty endpoint
+// fails before fetch is ever reached.
+function bridgeFetch(endpoint: string, path: string, init?: RequestInit) {
+  if (!isBridgeEnabled(endpoint)) throw new Error('No mail bridge is configured');
+  return fetch(`${bridgeBase(endpoint)}${path}`, init);
+}
+
 function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   return 'Mail bridge request failed';
@@ -58,11 +66,12 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 export async function loadBridgeSession(endpoint: string): Promise<BridgeSessionResponse> {
-  const response = await fetch(`${bridgeBase(endpoint)}/session`);
+  const response = await bridgeFetch(endpoint, '/session');
   return readJson<BridgeSessionResponse>(response);
 }
 
 export function openBridgeAuth(endpoint: string, provider: MailProvider) {
+  if (!isBridgeEnabled(endpoint)) throw new Error('No mail bridge is configured');
   const authWindow = globalThis.open(`${bridgeBase(endpoint)}/auth/${provider}/start`, '_blank', 'noopener,noreferrer');
   if (!authWindow) throw new Error('The browser blocked the provider authorization window.');
 }
@@ -72,23 +81,23 @@ export async function syncBridgeMessages(endpoint: string, limit = 2000, pageTok
   if (pageToken) params.set('pageToken', pageToken);
   if (pageToken || limit < 2000) params.set('paged', 'true');
   if (includeBodies) params.set('includeBodies', 'true');
-  const response = await fetch(`${bridgeBase(endpoint)}/messages?${params}`);
+  const response = await bridgeFetch(endpoint, `/messages?${params}`);
   return readJson<BridgeMessagesResponse>(response);
 }
 
 export async function loadBridgeMessage(endpoint: string, messageId: string): Promise<BridgeMessageResponse> {
-  const response = await fetch(`${bridgeBase(endpoint)}/messages/${encodeURIComponent(messageId)}`);
+  const response = await bridgeFetch(endpoint, `/messages/${encodeURIComponent(messageId)}`);
   return readJson<BridgeMessageResponse>(response);
 }
 
 export async function disconnectBridge(endpoint: string): Promise<BridgeSessionResponse> {
-  const response = await fetch(`${bridgeBase(endpoint)}/disconnect`, { method: 'POST' });
+  const response = await bridgeFetch(endpoint, '/disconnect', { method: 'POST' });
   return readJson<BridgeSessionResponse>(response);
 }
 
 export async function applyBridgeAction(endpoint: string, message: MailMessage, action: HoverActionId) {
   if (!message.providerMessageId) return;
-  const response = await fetch(`${bridgeBase(endpoint)}/messages/${encodeURIComponent(message.providerMessageId)}/actions`, {
+  const response = await bridgeFetch(endpoint, `/messages/${encodeURIComponent(message.providerMessageId)}/actions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, current: { starred: message.starred, unread: message.unread, mailbox: message.mailbox } }),

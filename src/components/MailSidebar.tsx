@@ -32,6 +32,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 
+import { isBridgeEnabled, PREVIEW_NOTICE } from '../lib/bridgeConfig';
 import type { ConnectorState, MailViewId, SidebarLabel } from '../types';
 
 interface SidebarItem {
@@ -133,6 +134,8 @@ export const MailSidebar: React.FC<MailSidebarProps> = ({
     </button>
   );
 
+  const bridgeEnabled = isBridgeEnabled(connector.endpoint);
+
   return (
     <aside className="mail-sidebar">
       <div className="mail-sidebar__brand">
@@ -140,7 +143,7 @@ export const MailSidebar: React.FC<MailSidebarProps> = ({
           <span className="mail-sidebar__mark">M</span>
           <span>
             <strong>osionos Mail</strong>
-            <small>{connector.connected ? connector.account : 'Gmail localhost bridge'}</small>
+            <small>{bridgeEnabled ? (connector.connected ? connector.account : 'Gmail localhost bridge') : 'Preview'}</small>
           </span>
         </button>
       </div>
@@ -179,10 +182,14 @@ export const MailSidebar: React.FC<MailSidebarProps> = ({
           <span className="mail-sidebar-row__icon"><CircleHelp size={18} /></span>
           <span className="mail-sidebar-row__label">Support & feedback</span>
         </button>
-        <button className="mail-bridge-status" type="button" onClick={onOpenConnector}>
-          <MessageSquare size={15} />
-          <span>{connector.connected ? 'Gmail connected' : 'Connect Gmail locally'}</span>
-        </button>
+        {bridgeEnabled ? (
+          <button className="mail-bridge-status" type="button" onClick={onOpenConnector}>
+            <MessageSquare size={15} />
+            <span>{connector.connected ? 'Gmail connected' : 'Connect Gmail locally'}</span>
+          </button>
+        ) : (
+          <p className="mail-bridge-status mail-preview-notice" role="note">{PREVIEW_NOTICE}</p>
+        )}
         <div className="mail-sidebar__resize" aria-hidden="true" />
       </div>
     </aside>
