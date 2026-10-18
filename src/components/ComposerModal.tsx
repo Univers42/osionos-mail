@@ -21,7 +21,7 @@ interface ComposerModalProps {
 }
 
 export const ComposerModal: React.FC<ComposerModalProps> = ({ onClose, onCreateDraft }) => {
-  const [to, setTo] = useState('team@univers42.local');
+  const [to, setTo] = useState('team@example.com');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
 
@@ -29,7 +29,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({ onClose, onCreateD
     const created: MailMessage = {
       id: `draft-${Date.now()}`,
       fromName: 'Me',
-      fromEmail: 'dylan@univers42.local',
+      fromEmail: 'you@example.com',
       to: to.split(',').map((value) => value.trim()).filter(Boolean),
       subject: subject.trim() || 'Untitled draft',
       snippet: body.trim() || 'Empty draft',
