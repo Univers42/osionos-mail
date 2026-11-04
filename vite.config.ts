@@ -10,6 +10,7 @@
 /*                                                                            */
 /* ************************************************************************** */
 
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { defineConfig } from 'vite';
@@ -19,7 +20,7 @@ const mailBridgeTarget = process.env.VITE_MAIL_BRIDGE_URL || 'http://localhost:4
 export default defineConfig({
   root: __dirname,
   cacheDir: path.resolve(__dirname, 'node_modules/.vite'),
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     outDir: path.resolve(__dirname, 'dist'),
     emptyOutDir: true,
