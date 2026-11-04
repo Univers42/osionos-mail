@@ -63,11 +63,11 @@ export const ConnectorModal: React.FC<ConnectorModalProps> = ({ connector, onCha
 
         <label className="mail-field">
           <span>Account</span>
-          <input value={connector.account} autoComplete="off" spellCheck={false} onChange={(event) => update({ account: event.target.value })} />
+          <input name="account" value={connector.account} autoComplete="off" spellCheck={false} onChange={(event) => update({ account: event.target.value })} />
         </label>
         <label className="mail-field">
           <span>Local endpoint</span>
-          <input value={connector.endpoint} autoComplete="off" spellCheck={false} onChange={(event) => update({ endpoint: event.target.value })} />
+          <input name="endpoint" value={connector.endpoint} autoComplete="off" spellCheck={false} onChange={(event) => update({ endpoint: event.target.value })} />
         </label>
 
         <div className="mail-connector-status">

@@ -55,7 +55,7 @@ export const CommandMenu: React.FC<CommandMenuProps> = ({
 
       {searchPlaceholder ? (
         <div className="mail-menu__search">
-          <input
+          <input name="query"
             value={query}
             placeholder={searchPlaceholder}
             onChange={(event) => setQuery(event.target.value)}

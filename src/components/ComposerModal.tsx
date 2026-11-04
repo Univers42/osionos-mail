@@ -65,15 +65,15 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({ onClose, onCreateD
         </header>
         <label className="mail-field">
           <span>To</span>
-          <input value={to} onChange={(event) => setTo(event.target.value)} />
+          <input name="to" value={to} onChange={(event) => setTo(event.target.value)} />
         </label>
         <label className="mail-field">
           <span>Subject</span>
-          <input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" />
+          <input name="subject" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" />
         </label>
         <label className="mail-field mail-field--body">
           <span>Body</span>
-          <textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Write an email..." />
+          <textarea name="body" value={body} onChange={(event) => setBody(event.target.value)} placeholder="Write an email..." />
         </label>
         <footer className="mail-modal__footer">
           <button type="button" className="mail-secondary-button" onClick={saveDraft}>Save draft</button>
