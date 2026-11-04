@@ -10,6 +10,14 @@
 /*                                                                            */
 /* ************************************************************************** */
 
+/* Tailwind CSS 4, the styling framework osionos uses. Theme and utilities only: preflight
+   is left out because the rules below carry this app's own base styles and Tailwind's reset
+   would change them. Those rules are unlayered, so they win over a utility on any property
+   both set. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
 :root {
   --osio-space-1: 4px;
   --osio-space-2: 8px;
@@ -891,7 +899,6 @@ button {
 .mail-hover-action small { color: var(--osio-fg-subtle); font-size: 12px; }
 .mail-hover-action button { min-width: 0; height: 28px; padding: 0 8px; }
 .mail-hover-action button:disabled { cursor: default; opacity: 0.35; }
-.rotate-180 { transform: rotate(180deg); }
 
 .mail-modal-backdrop {
   position: fixed;
