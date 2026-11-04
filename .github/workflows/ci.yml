@@ -37,6 +37,17 @@ jobs:
       - name: Build
         run: npm run build
 
+  # The prod image's nginx: the HTML is no-cache and the hashed bundles immutable, read back from
+  # a running container (scripts/check-prod-headers.sh).
+  prod-headers:
+    name: prod image cache headers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build, serve and read the headers
+        run: sh scripts/check-prod-headers.sh
+
   # One Pages deployment per branch head: develop → https://develop.osionos-mail.pages.dev
   # (beta), main → https://osionos-mail.pages.dev (release). The bridge URLs are built empty
   # on purpose: Pages serves the static preview (ADR 0030 in groot, Phase 1); the connector
