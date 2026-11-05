@@ -10,7 +10,7 @@
 /*                                                                            */
 /* ************************************************************************** */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Send, X } from 'lucide-react';
 
 import type { MailMessage } from '../types';
@@ -24,6 +24,16 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({ onClose, onCreateD
   const [to, setTo] = useState('team@example.com');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+
+  // On the document, not the section: the composer takes no focus when it opens, so a key handler
+  // on the section would miss Escape until the user clicks into a field.
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.isComposing) onClose();
+    };
+    globalThis.document.addEventListener('keydown', closeOnEscape);
+    return () => globalThis.document.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
 
   const saveDraft = () => {
     const created: MailMessage = {
@@ -53,7 +63,7 @@ export const ComposerModal: React.FC<ComposerModalProps> = ({ onClose, onCreateD
 
   return (
     <div className="mail-modal-backdrop">
-      <section className="mail-modal mail-modal--composer" aria-label="Compose mail">
+      <section className="mail-modal mail-modal--composer" role="dialog" aria-modal="true" aria-label="Compose mail">
         <header className="mail-modal__header">
           <div>
             <span className="mail-modal__eyebrow">Composer</span>
