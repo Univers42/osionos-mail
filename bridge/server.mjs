@@ -252,7 +252,7 @@ function callbackDebug() {
 function publicSession(extra = {}) {
   const tokens = readTokens();
   const account = tokens?.account || '';
-  let message = 'Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before connecting Gmail.';
+  let message = 'Google sign-in is not available on this deployment.';
   if (configured()) {
     message = vaultStatus.loaded ? 'Gmail bridge is configured from BaaS Vault.' : 'Gmail bridge is configured for localhost OAuth.';
   }

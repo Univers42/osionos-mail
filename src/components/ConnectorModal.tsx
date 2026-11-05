@@ -75,10 +75,17 @@ export const ConnectorModal: React.FC<ConnectorModalProps> = ({ connector, onCha
           <span>{connector.connected ? `Connected to Gmail as ${connector.account}` : connector.message || 'Ready for localhost Gmail authorization'}</span>
         </div>
 
-        <div className="mail-bridge-help">
-          <strong>Gmail localhost bridge</strong>
-          <span>Run `npm run bridge` with Google OAuth credentials. Tokens stay in `.mail-bridge-tokens.json`; the browser only reads normalized mail data from localhost.</span>
-        </div>
+        {connector.configured ? (
+          <div className="mail-bridge-help">
+            <strong>Gmail localhost bridge</strong>
+            <span>Run `npm run bridge` with Google OAuth credentials. Tokens stay in `.mail-bridge-tokens.json`; the browser only reads normalized mail data from localhost.</span>
+          </div>
+        ) : (
+          <div className="mail-bridge-help">
+            <strong>Gmail sign-in</strong>
+            <span>Google sign-in is not available on this deployment. You can still read the messages shown here and save drafts.</span>
+          </div>
+        )}
 
         <footer className="mail-modal__footer">
           <button type="button" className="mail-secondary-button" onClick={onDisconnect}>

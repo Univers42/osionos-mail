@@ -101,6 +101,7 @@ export interface ConnectorState {
   account: string;
   endpoint: string;
   connected: boolean;
+  configured?: boolean;
   bridgeAvailable?: boolean;
   message?: string;
   lastSync: string | null;

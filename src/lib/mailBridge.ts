@@ -112,6 +112,7 @@ export function bridgeSessionToConnector(endpoint: string, current: ConnectorSta
     provider: session.provider,
     account: session.account || current.account,
     connected: session.connected,
+    configured: session.configured,
     bridgeAvailable: true,
     message: session.message,
     lastSync: session.lastSync,
