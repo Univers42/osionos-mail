@@ -1,15 +1,3 @@
-/* ************************************************************************** */
-/*                                                                            */
-/*                                                        :::      ::::::::   */
-/*   mailBridge.ts                                      :+:      :+:    :+:   */
-/*                                                    +:+ +:+         +:+     */
-/*   By: dlesieur <dlesieur@student.42.fr>          +#+  +:+       +#+        */
-/*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2026/05/18 21:19:16 by dlesieur          #+#    #+#             */
-/*   Updated: 2026/05/18 21:19:16 by dlesieur         ###   ########.fr       */
-/*                                                                            */
-/* ************************************************************************** */
-
 import { isBridgeEnabled } from './bridgeConfig';
 import type { ConnectorState, HoverActionId, MailMessage, MailProvider } from '../types';
 
@@ -67,10 +55,6 @@ function validateBridgeBase(endpoint: string): string {
   return parsed.origin + pathname;
 }
 
-function bridgeBase(endpoint: string) {
-  return validateBridgeBase(endpoint);
-}
-
 // Single exit to the network: every bridge call passes here, so an empty endpoint
 // fails before fetch is ever reached.
 function bridgeFetch(endpoint: string, path: string, init?: RequestInit) {
@@ -79,11 +63,6 @@ function bridgeFetch(endpoint: string, path: string, init?: RequestInit) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   // NOSONAR: base endpoint is strictly validated and normalized
   return fetch(`${base}${normalizedPath}`, init); // NOSONAR
-}
-
-function errorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return 'Mail bridge request failed';
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -163,5 +142,5 @@ export function bridgeSessionToConnector(endpoint: string, current: ConnectorSta
 }
 
 export function bridgeErrorStatus(error: unknown) {
-  return errorMessage(error);
+  return error instanceof Error ? error.message : 'Mail bridge request failed';
 }
