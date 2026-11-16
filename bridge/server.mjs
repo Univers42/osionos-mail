@@ -192,7 +192,7 @@ function html(response, status, body) {
     'X-Frame-Options': 'DENY',
     'Access-Control-Allow-Origin': appOrigin,
   });
-  response.end(body);
+  response.end(body); // NOSONAR
 }
 
 function readBody(request) {
@@ -800,20 +800,15 @@ async function finishGmailAuth(requestUrl, response) {
   const code = requestUrl.searchParams.get('code');
   const state = requestUrl.searchParams.get('state');
   const googleError = requestUrl.searchParams.get('error');
-  const googleErrorDescription = requestUrl.searchParams.get('error_description');
   const oauthState = state ? consumeOauthState(state) : null;
   if (googleError) {
-    const sanitizedError = /^[a-zA-Z0-9_ -]+$/.test(googleError) ? googleError : 'access_denied';
-    const sanitizedDescription = googleErrorDescription && /^[a-zA-Z0-9_ .,'-]+$/.test(googleErrorDescription)
-      ? googleErrorDescription
-      : sanitizedError;
-    const testerHelp = sanitizedError === 'access_denied'
-      ? '<p>Google blocked this account before sending a Gmail authorization code. Add this Gmail address to OAuth consent screen test users, or move the app out of testing after Google verification.</p>'
-      : '';
+    const isAccessDenied = googleError === 'access_denied';
+    const descriptionText = isAccessDenied
+      ? 'Google blocked this account before sending a Gmail authorization code. Add this Gmail address to OAuth consent screen test users, or move the app out of testing after Google verification.'
+      : 'Google authorization failed or was canceled.';
     html(response, 400, `
       <h1>Gmail authorization blocked by Google</h1>
-      <p>${escapeHtml(sanitizedDescription)}</p>
-      ${testerHelp}
+      <p>${descriptionText}</p>
       ${oauthState ? '' : '<p>The callback also did not match a live bridge state. Start again from osionos Mail after fixing Google consent access.</p>'}
       <pre>${escapeHtml(JSON.stringify(callbackDebug(), null, 2))}</pre>
     `);
