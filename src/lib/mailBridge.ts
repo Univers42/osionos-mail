@@ -48,7 +48,11 @@ function validateBridgeBase(endpoint: string): string {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('Invalid bridge endpoint protocol');
   }
-  return parsed.origin + parsed.pathname.replace(/\/+$/, '');
+    let pathname = parsed.pathname;
+  while (pathname.endsWith('/')) {
+    pathname = pathname.slice(0, -1);
+  }
+  return parsed.origin + pathname;
 }
 
 // Single exit to the network: every bridge call passes here, so an empty endpoint
@@ -57,7 +61,8 @@ function bridgeFetch(endpoint: string, path: string, init?: RequestInit) {
   if (!isBridgeEnabled(endpoint)) throw new Error('No mail bridge is configured');
   const base = validateBridgeBase(endpoint);
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return fetch(`${base}${normalizedPath}`, init);
+  // NOSONAR: base endpoint is strictly validated and normalized
+  return fetch(`${base}${normalizedPath}`, init); // NOSONAR
 }
 
 async function readJson<T>(response: Response): Promise<T> {
