@@ -1,15 +1,3 @@
-/* ************************************************************************** */
-/*                                                                            */
-/*                                                        :::      ::::::::   */
-/*   mailBridge.ts                                      :+:      :+:    :+:   */
-/*                                                    +:+ +:+         +:+     */
-/*   By: dlesieur <dlesieur@student.42.fr>          +#+  +:+       +#+        */
-/*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2026/05/18 21:19:16 by dlesieur          #+#    #+#             */
-/*   Updated: 2026/05/18 21:19:16 by dlesieur         ###   ########.fr       */
-/*                                                                            */
-/* ************************************************************************** */
-
 import { isBridgeEnabled } from './bridgeConfig';
 import type { ConnectorState, HoverActionId, MailMessage, MailProvider } from '../types';
 
@@ -60,15 +48,7 @@ function validateBridgeBase(endpoint: string): string {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('Invalid bridge endpoint protocol');
   }
-    let pathname = parsed.pathname;
-  while (pathname.endsWith('/')) {
-    pathname = pathname.slice(0, -1);
-  }
-  return parsed.origin + pathname;
-}
-
-function bridgeBase(endpoint: string) {
-  return validateBridgeBase(endpoint);
+  return parsed.origin + parsed.pathname.replace(/\/+$/, '');
 }
 
 // Single exit to the network: every bridge call passes here, so an empty endpoint
@@ -77,13 +57,7 @@ function bridgeFetch(endpoint: string, path: string, init?: RequestInit) {
   if (!isBridgeEnabled(endpoint)) throw new Error('No mail bridge is configured');
   const base = validateBridgeBase(endpoint);
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  // NOSONAR: base endpoint is strictly validated and normalized
-  return fetch(`${base}${normalizedPath}`, init); // NOSONAR
-}
-
-function errorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return 'Mail bridge request failed';
+  return fetch(`${base}${normalizedPath}`, init);
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -163,5 +137,5 @@ export function bridgeSessionToConnector(endpoint: string, current: ConnectorSta
 }
 
 export function bridgeErrorStatus(error: unknown) {
-  return errorMessage(error);
+  return error instanceof Error ? error.message : 'Mail bridge request failed';
 }
