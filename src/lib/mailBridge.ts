@@ -61,7 +61,7 @@ function validateBridgeBase(endpoint: string): string {
     throw new Error('Invalid bridge endpoint protocol');
   }
     let pathname = parsed.pathname;
-  while (pathname.endsWith('/') && pathname.length > 1) {
+  while (pathname.endsWith('/')) {
     pathname = pathname.slice(0, -1);
   }
   return parsed.origin + pathname;
