@@ -22,7 +22,8 @@ COPY . .
 EXPOSE 3002
 CMD ["npm", "run", "dev"]
 
-FROM public.ecr.aws/docker/library/nginx:1.27-alpine AS prod # NOSONAR
+# NOSONAR: Production nginx binds port 80 and serves static assets
+FROM public.ecr.aws/docker/library/nginx:1.27-alpine AS prod
 COPY nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
