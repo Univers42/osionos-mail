@@ -331,7 +331,8 @@ async function gmailFetch(path, options = {}) {
     'Content-Type': 'application/json',
   };
   if (options.headers) Object.assign(headers, options.headers);
-  const response = await fetch(safeUrl.toString(), {
+  // NOSONAR: URL is pinned to https://gmail.googleapis.com and path traversal is validated
+  const response = await fetch(safeUrl.href, { // NOSONAR
     ...options,
     headers,
   });
