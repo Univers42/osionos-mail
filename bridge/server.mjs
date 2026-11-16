@@ -84,6 +84,17 @@ function clampLimit(value) {
   return Math.min(Math.max(positiveInt(value, defaultLimit), 1), maxSyncLimit);
 }
 
+function sanitizeLog(message) {
+  return String(message ?? '').replace(/[\r\n]/g, ' ');
+}
+
+function safeMessageId(id) {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    throw new Error('Invalid message ID');
+  }
+  return id;
+}
+
 function escapeHtml(value = '') {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -176,6 +187,9 @@ function json(response, status, payload) {
 function html(response, status, body) {
   response.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline';",
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
     'Access-Control-Allow-Origin': appOrigin,
   });
   response.end(body);
@@ -304,13 +318,20 @@ async function accessToken() {
 }
 
 async function gmailFetch(path, options = {}) {
+  if (typeof path !== 'string' || path.includes('..') || path.startsWith('/') || path.includes('\\')) {
+    throw new Error('Invalid Gmail API request path');
+  }
+  const safeUrl = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`);
+  if (!safeUrl.pathname.startsWith('/gmail/v1/users/me/')) {
+    throw new Error('Invalid Gmail API request path');
+  }
   const token = await accessToken();
   const headers = {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
   };
   if (options.headers) Object.assign(headers, options.headers);
-  const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, {
+  const response = await fetch(safeUrl.toString(), {
     ...options,
     headers,
   });
@@ -675,7 +696,7 @@ async function mirrorMessagesToBaaS(account, messages) {
     baasRuntime.connected = false;
     baasRuntime.message = error instanceof Error ? error.message : 'BaaS mirror failed';
     if (requireBaaS) throw error;
-    console.warn(`[mail-bridge] BaaS mirror skipped: ${baasRuntime.message}`);
+    console.warn(`[mail-bridge] BaaS mirror skipped: ${sanitizeLog(baasRuntime.message)}`);
     return { ...baasRuntime };
   }
 }
@@ -690,7 +711,7 @@ async function loadMessages(limit, includeBodies = false) {
   const currentTokens = tokens ?? {};
   writeTokens({ ...currentTokens, account, lastSync: new Date().toISOString() });
   // Fire-and-forget: the inbox is already fetched; never block it on the BaaS mirror.
-  void mirrorMessagesToBaaS(account, normalized).catch((error) => console.warn(`[mail-bridge] BaaS mirror failed: ${error?.message ?? error}`));
+  void mirrorMessagesToBaaS(account, normalized).catch((error) => console.warn(`[mail-bridge] BaaS mirror failed: ${sanitizeLog(error?.message ?? error)}`));
   return {
     account,
     messages: normalized,
@@ -711,7 +732,7 @@ async function loadMessagePage(limit, pageToken, includeBodies = false) {
   const currentTokens = tokens ?? {};
   writeTokens({ ...currentTokens, account, lastSync: new Date().toISOString() });
   // Fire-and-forget: the inbox is already fetched; never block it on the BaaS mirror.
-  void mirrorMessagesToBaaS(account, normalized).catch((error) => console.warn(`[mail-bridge] BaaS mirror failed: ${error?.message ?? error}`));
+  void mirrorMessagesToBaaS(account, normalized).catch((error) => console.warn(`[mail-bridge] BaaS mirror failed: ${sanitizeLog(error?.message ?? error)}`));
   return {
     account,
     messages: normalized,
@@ -781,13 +802,16 @@ async function finishGmailAuth(requestUrl, response) {
   const googleErrorDescription = requestUrl.searchParams.get('error_description');
   const oauthState = state ? consumeOauthState(state) : null;
   if (googleError) {
-    const description = googleErrorDescription || googleError;
-    const testerHelp = googleError === 'access_denied'
+    const sanitizedError = /^[a-zA-Z0-9_ -]+$/.test(googleError) ? googleError : 'access_denied';
+    const sanitizedDescription = googleErrorDescription && /^[a-zA-Z0-9_ .,'-]+$/.test(googleErrorDescription)
+      ? googleErrorDescription
+      : sanitizedError;
+    const testerHelp = sanitizedError === 'access_denied'
       ? '<p>Google blocked this account before sending a Gmail authorization code. Add this Gmail address to OAuth consent screen test users, or move the app out of testing after Google verification.</p>'
       : '';
     html(response, 400, `
       <h1>Gmail authorization blocked by Google</h1>
-      <p>${escapeHtml(description)}</p>
+      <p>${escapeHtml(sanitizedDescription)}</p>
       ${testerHelp}
       ${oauthState ? '' : '<p>The callback also did not match a live bridge state. Start again from osionos Mail after fixing Google consent access.</p>'}
       <pre>${escapeHtml(JSON.stringify(callbackDebug(), null, 2))}</pre>
@@ -885,13 +909,13 @@ async function handleMessageRoutes(request, requestUrl, response) {
     json(response, 200, {
       provider: 'gmail',
       account: await currentAccount(),
-      message: await loadMessageDetail(decodeURIComponent(detailMatch[1])),
+      message: await loadMessageDetail(safeMessageId(decodeURIComponent(detailMatch[1]))),
     });
     return true;
   }
   const actionMatch = /^\/messages\/([^/]+)\/actions$/.exec(requestUrl.pathname);
   if (request.method === 'POST' && actionMatch) {
-    await applyAction(decodeURIComponent(actionMatch[1]), await readBody(request));
+    await applyAction(safeMessageId(decodeURIComponent(actionMatch[1])), await readBody(request));
     json(response, 200, { ok: true });
     return true;
   }

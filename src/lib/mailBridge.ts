@@ -40,15 +40,40 @@ export interface BridgeMessageResponse {
   message: MailMessage;
 }
 
+function validateBridgeBase(endpoint: string): string {
+  const trimmed = endpoint.trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    throw new Error('No mail bridge is configured');
+  }
+  if (trimmed.startsWith('/')) {
+    if (trimmed.startsWith('//')) {
+      throw new Error('Invalid bridge endpoint');
+    }
+    return trimmed;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error('Invalid bridge endpoint URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Invalid bridge endpoint protocol');
+  }
+  return parsed.origin + parsed.pathname.replace(/\/+$/, '');
+}
+
 function bridgeBase(endpoint: string) {
-  return endpoint.trim().replace(/\/+$/, '');
+  return validateBridgeBase(endpoint);
 }
 
 // Single exit to the network: every bridge call passes here, so an empty endpoint
 // fails before fetch is ever reached.
 function bridgeFetch(endpoint: string, path: string, init?: RequestInit) {
   if (!isBridgeEnabled(endpoint)) throw new Error('No mail bridge is configured');
-  return fetch(`${bridgeBase(endpoint)}${path}`, init);
+  const base = validateBridgeBase(endpoint);
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return fetch(`${base}${normalizedPath}`, init);
 }
 
 function errorMessage(error: unknown) {
@@ -72,7 +97,20 @@ export async function loadBridgeSession(endpoint: string): Promise<BridgeSession
 
 export function openBridgeAuth(endpoint: string, provider: MailProvider) {
   if (!isBridgeEnabled(endpoint)) throw new Error('No mail bridge is configured');
-  const authWindow = globalThis.open(`${bridgeBase(endpoint)}/auth/${provider}/start`, '_blank', 'noopener,noreferrer');
+  const safeProvider = encodeURIComponent(provider);
+  const base = validateBridgeBase(endpoint);
+  const authUrl = `${base}/auth/${safeProvider}/start`;
+  let resolvedUrl: string;
+  if (authUrl.startsWith('/')) {
+    resolvedUrl = new URL(authUrl, globalThis.location?.origin || 'http://localhost').toString();
+  } else {
+    const parsed = new URL(authUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Invalid auth URL protocol');
+    }
+    resolvedUrl = parsed.toString();
+  }
+  const authWindow = globalThis.open(resolvedUrl, '_blank', 'noopener,noreferrer');
   if (!authWindow) throw new Error('The browser blocked the provider authorization window.');
 }
 
