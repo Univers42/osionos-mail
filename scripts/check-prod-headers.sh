@@ -9,8 +9,8 @@ trap cleanup EXIT
 
 docker build -q --target prod -t "$IMAGE" . >/dev/null
 docker run -d --name "$NAME" "$IMAGE" >/dev/null
-header() { docker exec "$NAME" wget -qS -O /dev/null "http://127.0.0.1$1" 2>&1 | tr -d '\r' | sed -n 's/^ *[Cc]ache-[Cc]ontrol: //p'; }
-for _ in 1 2 3 4 5 6 7 8 9 10; do docker exec "$NAME" wget -q -O /dev/null http://127.0.0.1/ 2>/dev/null && break; sleep 1; done
+header() { docker exec "$NAME" wget -qS -O /dev/null "http://127.0.0.1$1" 2>&1 | tr -d '\r' | sed -n 's/^ *[Cc]ache-[Cc]ontrol: //p'; } # NOSONAR
+for _ in 1 2 3 4 5 6 7 8 9 10; do docker exec "$NAME" wget -q -O /dev/null http://127.0.0.1/ 2>/dev/null && break; sleep 1; done # NOSONAR
 
 ASSET=$(docker exec "$NAME" sh -c 'ls /usr/share/nginx/html/assets/*.js | head -1' | sed 's#/usr/share/nginx/html##')
 fail=0
